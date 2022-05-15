@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use std::env;
 use std::fs;
 use std::fs::DirEntry;
@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 
 const JPG_FOLDER: &str = "JPG";
-const RAW_ALLOWED_FILE_EXTENSIONS: &'static [&'static str] = &["arw"];
-const JPG_ALLOWED_FILE_EXTENSIONS: &'static [&'static str] = &["jpg", "jpeg"];
+const RAW_ALLOWED_FILE_EXTENSIONS: &[&str] = &["arw"];
+const JPG_ALLOWED_FILE_EXTENSIONS: &[&str] = &["jpg", "jpeg"];
 
 struct Filename {
     filename: String,
@@ -39,9 +39,9 @@ impl From<DirEntry> for Filename {
             .to_string()
             .to_lowercase();
         Self {
-            filename: filename,
-            name: name,
-            extension: extension,
+            filename,
+            name,
+            extension,
         }
     }
 }
@@ -55,19 +55,16 @@ fn get_pwd() -> Result<String> {
 }
 
 fn get_filenames_of_folder(path: PathBuf) -> Result<Vec<Filename>> {
-    match path.to_str() {
-        Some(path) => fs::read_dir(path)
-            .with_context(|| {format!("❌ Could not read directory {:?}", path)})
-            .map(|dir| {
-                dir.into_iter()
-                    .filter_map(|file| match file {
-                        Ok(file) => Some(file.into()),
-                        _ => None,
-                    })
-                    .collect::<Vec<Filename>>()
-            }),
-        None => Err(anyhow!("❌ Could not get string from path")),
-    }
+    fs::read_dir(path.clone())
+        .with_context(|| format!("❌ Could not read directory {:?}", path))
+        .map(|dir| {
+            dir.into_iter()
+                .filter_map(|file| match file {
+                    Ok(file) => Some(file.into()),
+                    _ => None,
+                })
+                .collect::<Vec<Filename>>()
+        })
 }
 
 fn get_filenames_of_folder_with_valid_extension(
@@ -90,44 +87,47 @@ fn find_duplicate_file(
 ) -> Vec<Filename> {
     let compare_names = compare_files
         .into_iter()
-        .map(|filename| {
-            filename.name
-        })
+        .map(|filename| filename.name)
         .collect::<Vec<String>>();
 
     target_files
         .into_iter()
-        .filter_map(|filename| {
-            if compare_names.contains(&filename.name){
-                None
-            } else {
-                Some(filename)
-            }
-        })
+        .filter(|filename| !compare_names.contains(&filename.name))
         .collect::<Vec<Filename>>()
 }
 
 fn convert_to_hfs_path(path: PathBuf) -> Result<String> {
-    let path = path.to_str().context("❌ Could not convert path to string")?;
-    let stdout = Command::new("osascript")
-        .arg("-e")
-        .arg(format!(r#"POSIX file "{}" as alias as text"#, path))
-        .output()
-        .context("❌ Cannot get HFS convert Output")?
-        .stdout;
-    match String::from_utf8(stdout) {
-        Ok(s) => Ok(s.trim().to_string()),
-        Err(_) => Err(anyhow!("❌ Could not convert to utf8")),
-    }
+    let stdout = path
+        .to_str()
+        .with_context(|| {
+            format!("❌ Could not get string from path. {:?}", path)
+        })
+        .and_then(|path| {
+            Command::new("osascript")
+                .arg("-e")
+                .arg(format!(r#"POSIX file "{}" as alias as text"#, path))
+                .output()
+                .with_context(|| {
+                    format!("❌ Cannot get HFS convert Output {}", path)
+                })
+                .map(|op| op.stdout)
+        })?;
+
+    String::from_utf8(stdout)
+        .context("❌ Could not convert to utf8")
+        .map(|s| s.trim().to_string())
 }
 
 fn print_result(output: &Output, file: &str) {
     if output.status.success() {
-        println!("👍 Delete {}", file);
+        println!("👍 Deleted {}", file);
     } else {
         let error = String::from_utf8_lossy(&output.stderr);
         if error.contains("29:106") {
-            println!("❌ Cannot find the file {:?}", file);
+            println!(
+                "❌ Could not delete file cause couldn't find the file {:?}",
+                file
+            );
         } else {
             println!("❌ {:?}", &error);
         }
@@ -135,22 +135,21 @@ fn print_result(output: &Output, file: &str) {
 }
 
 fn delete_files(file: String, hfs_folder_path: String) -> Result<()> {
-    let output = Command::new("osascript")
+    Command::new("osascript")
         .arg("-e")
         .arg(format!(
             r#"tell application "Finder" to delete (file "{}" of folder "{}")"#,
             file, hfs_folder_path
         ))
-        .output();
-    match output {
-        Err(_) => {
-            println!("⚠️⚠️⚠️ Cannot delete file {} ⚠️⚠️⚠️", file);
-        },
-        Ok(output) => {
+        .output()
+        .with_context(|| {
+            format!(
+                "❌ Could not delete file {:?} of folder {:?}, cause the command failed",
+                file, hfs_folder_path
+            )
+        }).map(|output| {
             print_result(&output, &file);
-        }
-    };
-    Ok(())
+        })
 }
 
 fn main() -> Result<()> {
@@ -158,18 +157,25 @@ fn main() -> Result<()> {
 
     let raw_folder_path = get_pwd()?;
     let raw_folder_path = Path::new(&raw_folder_path).to_path_buf();
-    let jpg_folder_path = Path::new(&raw_folder_path)
-        .join(JPG_FOLDER);
+    let jpg_folder_path = Path::new(&raw_folder_path).join(JPG_FOLDER);
     let jpg_folder_path_hfs = convert_to_hfs_path(jpg_folder_path.clone())?;
 
-    let raw_files =
-        get_filenames_of_folder_with_valid_extension(raw_folder_path, RAW_ALLOWED_FILE_EXTENSIONS.into())?;
-    let jpg_files =
-        get_filenames_of_folder_with_valid_extension(jpg_folder_path, JPG_ALLOWED_FILE_EXTENSIONS.into())?;
+    let raw_files = get_filenames_of_folder_with_valid_extension(
+        raw_folder_path,
+        RAW_ALLOWED_FILE_EXTENSIONS.into(),
+    )?;
+    let jpg_files = get_filenames_of_folder_with_valid_extension(
+        jpg_folder_path,
+        JPG_ALLOWED_FILE_EXTENSIONS.into(),
+    )?;
     let unused_files_in_jpg_folder = find_duplicate_file(raw_files, jpg_files);
 
     unused_files_in_jpg_folder.iter().for_each(|file| {
-        let _ = delete_files(file.filename.clone(), jpg_folder_path_hfs.clone());
+        let result =
+            delete_files(file.filename.clone(), jpg_folder_path_hfs.clone());
+        if result.is_err() {
+            println!("{:?}", result.err());
+        }
     });
 
     println!("✅ Done");
