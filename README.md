@@ -12,3 +12,10 @@
 
 # Dev
 `cargo run` 之前需要在 `target/debug` 下面建立資料夾 `JPG`
+
+### Build
+Build for intel mac
+```shell
+rustup target install x86_64-apple-darwin
+cargo build --target x86_64-apple-darwin
+```

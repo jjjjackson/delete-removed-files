@@ -47,6 +47,7 @@ impl From<DirEntry> for Filename {
 }
 
 fn get_pwd() -> Result<String> {
+    // Didn't use `env::current_dir()` because it doesn't work well with external hard drives
     let path = env::current_exe()
         .context("❌ Could not get current executable path")?;
     let path = path.parent().context("❌ Could not get parent directory")?;
@@ -172,8 +173,7 @@ fn main() -> Result<()> {
     let unused_files_in_jpg_folder = find_duplicate_file(raw_files, jpg_files);
 
     unused_files_in_jpg_folder.into_iter().for_each(|file| {
-        let result =
-            delete_files(file, jpg_folder_path_hfs.clone());
+        let result = delete_files(file, jpg_folder_path_hfs.clone());
         if result.is_err() {
             println!("{:?}", result.err());
         }
@@ -186,8 +186,79 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use std::fs;
+    use std::fs::File;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
+
+    fn create_files(folder_path: PathBuf, number_of_files: usize, ext: &str) {
+        (0..number_of_files).into_iter().for_each(|i| {
+            let file = folder_path.join(format!("test{}.{}", i, ext));
+            File::create(file.clone()).unwrap();
+        });
+    }
+
+    #[test]
+    fn test_get_filenames_of_folder() {
+        let number_of_files = 10;
+        let tmp_dir = tempdir().unwrap();
+        let raw_folder = tmp_dir.path();
+
+        create_files(raw_folder.into(), number_of_files, "arw");
+
+        let filenames = get_filenames_of_folder(raw_folder.into()).unwrap();
+        assert_eq!(filenames.len(), number_of_files);
+
+        tmp_dir.close().unwrap();
+    }
+
+    #[test]
+    fn test_get_filenames_of_folder_with_valid_extension() {
+        let number_of_files = 10;
+        let tmp_dir = tempdir().unwrap();
+        let raw_folder = tmp_dir.path();
+
+        create_files(raw_folder.into(), number_of_files, "arw");
+        create_files(raw_folder.into(), number_of_files, "jpg");
+
+        let filenames = get_filenames_of_folder_with_valid_extension(
+            raw_folder.into(),
+            vec!["arw"],
+        )
+        .unwrap();
+
+        assert_eq!(filenames.len(), number_of_files);
+
+        tmp_dir.close().unwrap();
+    }
+
     #[test]
     fn test_get_filename_and_extension() {
-        assert_eq!(2 + 2, 4);
+        let number_of_raw_files = 10;
+        let number_of_jpg_files = 11;
+        let tmp_dir = tempdir().unwrap();
+        let raw_folder = tmp_dir.path();
+        let jpg_folder = raw_folder.join("JPG");
+        fs::create_dir(jpg_folder.clone()).unwrap();
+
+        create_files(raw_folder.clone().into(), number_of_raw_files, "arw");
+        create_files(jpg_folder.clone().into(), number_of_jpg_files, "jpg");
+
+        let raw_files = get_filenames_of_folder_with_valid_extension(
+            raw_folder.into(),
+            vec!["arw"],
+        )
+        .unwrap();
+        let jpg_files = get_filenames_of_folder_with_valid_extension(
+            jpg_folder.into(),
+            vec!["jpg"],
+        )
+        .unwrap();
+
+        let unused_files_in_jpg_folder = find_duplicate_file(raw_files, jpg_files);
+
+        assert_eq!(unused_files_in_jpg_folder.len(), number_of_jpg_files - number_of_raw_files);
+        tmp_dir.close().unwrap();
     }
 }
