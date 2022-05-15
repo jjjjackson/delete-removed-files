@@ -134,21 +134,22 @@ fn print_result(output: &Output, file: &str) {
     }
 }
 
-fn delete_files(file: String, hfs_folder_path: String) -> Result<()> {
+fn delete_files(filename: Filename, hfs_folder_path: String) -> Result<()> {
+    let filename = filename.filename;
     Command::new("osascript")
         .arg("-e")
         .arg(format!(
             r#"tell application "Finder" to delete (file "{}" of folder "{}")"#,
-            file, hfs_folder_path
+            filename, hfs_folder_path
         ))
         .output()
         .with_context(|| {
             format!(
                 "❌ Could not delete file {:?} of folder {:?}, cause the command failed",
-                file, hfs_folder_path
+                filename, hfs_folder_path
             )
         }).map(|output| {
-            print_result(&output, &file);
+            print_result(&output, &filename);
         })
 }
 
@@ -170,9 +171,9 @@ fn main() -> Result<()> {
     )?;
     let unused_files_in_jpg_folder = find_duplicate_file(raw_files, jpg_files);
 
-    unused_files_in_jpg_folder.iter().for_each(|file| {
+    unused_files_in_jpg_folder.into_iter().for_each(|file| {
         let result =
-            delete_files(file.filename.clone(), jpg_folder_path_hfs.clone());
+            delete_files(file, jpg_folder_path_hfs.clone());
         if result.is_err() {
             println!("{:?}", result.err());
         }
